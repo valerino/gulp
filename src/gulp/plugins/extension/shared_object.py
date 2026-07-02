@@ -2,7 +2,6 @@ from typing import Annotated, Literal, Optional, override
 
 from fastapi import Body, Depends, Query
 from fastapi.responses import JSONResponse
-from git import exc
 from muty.jsend import JSendException, JSendResponse
 from muty.log import MutyLogger
 from sqlalchemy import ARRAY, Boolean, String
@@ -14,7 +13,6 @@ from sqlalchemy.dialects.postgresql import JSONB
 from gulp.api.collab.structs import GulpCollabBase, GulpCollabFilter, GulpUserPermission
 from gulp.api.collab.user_session import GulpUserSession
 from gulp.api.collab_api import GulpCollab
-from gulp.api.opensearch.sigma import sigma_to_tags
 from gulp.api.server.server_utils import ServerUtils
 from gulp.api.server.structs import APIDependencies
 from gulp.api.server_api import GulpServer

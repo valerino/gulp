@@ -8,7 +8,7 @@ log event dictionaries and streams back an AI-generated analysis to clients
 through an internal Redis broker.
 
 Configuration:
-Requires the following configuration in the GULP configuration file:
+Requires the following configuration in the shared_object table:
 "ai_configuration": {
     // The default model to use.
     "default_model": "your_default_model_here",
@@ -20,7 +20,7 @@ Requires the following configuration in the GULP configuration file:
 
 Behavior:
 - Registers POST /get_ai_hint during post_init when running in the main process.
-- Reads configuration from GulpConfig under the 'ai_configuration' section:
+- Reads configuration from a shared object with id 'ai_configuration':
     - 'openrouter_key' (required): API key used in the Authorization header.
     - 'default_model' (required): model identifier to send in the API payload.
 - Validates read permission for the requested operation before accepting work.
@@ -78,11 +78,19 @@ from gulp.api.server.server_utils import ServerUtils
 from gulp.api.server.structs import APIDependencies
 from gulp.api.server_api import GulpServer
 from gulp.api.ws_api import GulpRedisBroker
-from gulp.config import GulpConfig
 from gulp.plugin import GulpPluginBase, GulpPluginType
+from gulp.plugins.extension.shared_object import Plugin as SharedObjectPlugin
 
 from muty.jsend import JSendException, JSendResponse
 from muty.log import MutyLogger
+
+_CONFIG_OBJECT_ID = "ai_configuration"
+_CONFIG_OBJECT_TYPE = "plugin_configuration"
+_DEFAULT_CONFIGURATION = {
+    "default_model": "your_default_model_here",
+    "api_base_url": "https://openrouter.ai/api/v1",
+    "openrouter_key": "sk-or-your-openrouter-api-key",
+}
 
 
 class Plugin(GulpPluginBase):
@@ -90,6 +98,7 @@ class Plugin(GulpPluginBase):
     _api_key: str = None
     _model: str = None
     _api_base_url: str = None
+    _configuration: dict = dict(_DEFAULT_CONFIGURATION)
 
     _PROMPT = """# Role and Goal
     You are a security analyst. Your task is to analyze a set of log events provided in a JSON array. The logs come from different systems (like firewalls, web servers, and Windows endpoints).
@@ -149,7 +158,13 @@ class Plugin(GulpPluginBase):
         return "Threat hunting AI-Assistant"
 
     @override
+    def depends_on(self) -> list[str]:
+        return ["shared_object"]
+
+    @override
     async def post_init(self, *kwargs):
+        await self._refresh_configuration_from_db(create_if_missing=True)
+
         if self.is_running_in_main_process():
             GulpServer.get_instance().add_api_route(
                 "/get_ai_hint",
@@ -173,26 +188,63 @@ class Plugin(GulpPluginBase):
                 summary="tell to explain and correlate logs event",
                 description="tell to ai to explain the events logs provided if there are some correlation about this events based by context and timeline",
             )
-            # read api key
-            self._api_key = None
-            ai_configuration = GulpConfig.get_instance().get("ai_configuration", {})
-
-            if ai_configuration:
-                self._api_key = ai_configuration.get("openrouter_key", None)
-                self._model = ai_configuration.get("default_model")
-                self._api_base_url = ai_configuration.get(
-                    "api_base_url", "https://openrouter.ai/api/v1"
-                )
-            if not self._api_key:
-                raise Exception(
-                    "'ai_configuration/openrouter_key' missing in the configuration file!"
-                )
-            if not self._model:
-                raise Exception(
-                    "'ai_configuration/default_model' missing in the configuration file!"
-                )
         else:
             MutyLogger.get_instance().debug("initialized in worker process")
+
+    async def _refresh_configuration_from_db(
+        self, create_if_missing: bool = False
+    ) -> bool:
+        """Refresh AI configuration from the shared-object DB row."""
+        async with GulpCollab.get_instance().session() as sess:
+            shared_obj = await SharedObjectPlugin.GulpSharedObject.get_by_id(
+                sess, _CONFIG_OBJECT_ID, throw_if_not_found=False
+            )
+
+            if not shared_obj:
+                if create_if_missing:
+                    shared_obj = (
+                        await SharedObjectPlugin.GulpSharedObject.create_internal(
+                            sess=sess,
+                            user_id="admin",
+                            obj_id=_CONFIG_OBJECT_ID,
+                            name="AI configuration",
+                            obj=dict(_DEFAULT_CONFIGURATION),
+                            obj_type=_CONFIG_OBJECT_TYPE,
+                            private=True,
+                            on_conflict="do_nothing",
+                        )
+                    )
+                else:
+                    MutyLogger.get_instance().warning(
+                        "AI configuration shared object '%s' not found",
+                        _CONFIG_OBJECT_ID,
+                    )
+                    return self._set_configuration(dict(_DEFAULT_CONFIGURATION))
+
+            db_configuration = (
+                shared_obj.obj if isinstance(shared_obj.obj, dict) else {}
+            )
+            new_configuration = dict(_DEFAULT_CONFIGURATION)
+            new_configuration.update(db_configuration)
+            return self._set_configuration(new_configuration)
+
+    def _set_configuration(self, configuration: dict) -> bool:
+        """Set the in-memory AI configuration and return True if it changed."""
+        changed = configuration != self._configuration
+        self._configuration = configuration
+        self._api_key = configuration.get("openrouter_key")
+        self._model = configuration.get("default_model")
+        self._api_base_url = configuration.get(
+            "api_base_url", "https://openrouter.ai/api/v1"
+        )
+        return changed
+
+    def _validate_configuration(self) -> None:
+        """Validate the DB-backed AI configuration before calling the LLM API."""
+        if not self._api_key:
+            raise Exception("'ai_configuration/openrouter_key' missing!")
+        if not self._model:
+            raise Exception("'ai_configuration/default_model' missing!")
 
     async def get_ai_hint_handler(
         self,
@@ -224,6 +276,9 @@ up to 10 dictionary created from GulpDocuments, dictionary must to be contains:
                     sess, token, operation_id, permission=GulpUserPermission.READ
                 )
                 user_id = s.user_id
+
+            await self._refresh_configuration_from_db(create_if_missing=True)
+            self._validate_configuration()
 
             final_prompt = self._PROMPT.replace(
                 "<%DATA%>",

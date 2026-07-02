@@ -72,18 +72,24 @@ You must provide your analysis in Markdown using this exact structure:
 
 ### Configuration:
 
-Requires the following configuration in the GULP configuration file:
+The plugin reads its LLM configuration from a `GulpSharedObject` row, not from
+`gulp_cfg.json`.
+
+- shared object ID: `ai_configuration`
+- shared object type: `plugin_configuration`
+- expected `obj`:
 
 ```json
-"ai_configuration": {
-	// The default model to use.
-	"default_model": "your_default_model_here",
-	// LLM api base url
-    "api_base_url": "https://openrouter.ai/api/v1",
-	// Insert your OpenRouter API key here.
-	"openrouter_key": "sk-or-your-openrouter-api-key",
+{
+  "default_model": "your_default_model_here",
+  "api_base_url": "https://openrouter.ai/api/v1",
+  "openrouter_key": "sk-or-your-openrouter-api-key"
 }
 ```
+
+At startup the plugin creates this shared object with the base configuration if
+it does not already exist. Update the configuration through the existing
+shared-object API; the plugin refreshes it before each assistant request.
 
 ### Exposed API:
 
@@ -120,5 +126,4 @@ The API operates asynchronously. Upon receiving a request, it performs permissio
 		- "ai_assistant_done": indicates the stream is finished.
 		- "ai_assistant_error": indicates an API error (payload" field contains error text).
 	- Clients are expected to subscribe to these events to reconstruct the final AI-generated response in real time.
-
 
