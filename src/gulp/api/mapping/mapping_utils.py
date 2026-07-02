@@ -35,6 +35,8 @@ def normalize_timestamp(value: Any, timestamp_format: str | None = None) -> str:
     if isinstance(value, datetime):
         dt = value
     elif isinstance(value, (int, float)):
+        if value < 0:
+            raise ValueError(f"Negative timestamp value: {value}")
         abs_v = abs(float(value))
         if abs_v >= 1e18:
             dt = datetime.fromtimestamp(float(value) / 1e9, tz=timezone.utc)
@@ -127,7 +129,7 @@ def convert_special_timestamp(
     timestamp_kind: str | None = None,
     timestamp_format: str | None = None,
     output: str = "iso8601",
-) -> Any:
+) -> str|int:
     """Convert mapping-specific timestamp encodings into the requested output format."""
 
     kind = timestamp_kind or "generic"
@@ -147,13 +149,24 @@ def convert_special_timestamp(
 
     if output == "unix_nanos":
         if kind == "chrome":
-            return muty.time.chrome_epoch_to_nanos_from_unix_epoch(int(value))
+            ns = muty.time.chrome_epoch_to_nanos_from_unix_epoch(int(value))
+            if ns < 0:
+                raise ValueError(f"Negative timestamp value: {value}")
+            return ns
+
         if kind == "windows_filetime":
-            return muty.time.windows_filetime_to_nanos_from_unix_epoch(int(value))
+            ns = muty.time.windows_filetime_to_nanos_from_unix_epoch(int(value))
+            if ns < 0:
+                raise ValueError(f"Negative timestamp value: {value}")
+            return ns
+
         if kind == "generic":
             _, ns, _ = GulpDocument.ensure_timestamp(
                 str(value), format_string=timestamp_format
             )
+            if ns < 0:
+                raise ValueError(f"Negative timestamp value: {value}")
+
             return ns
         raise ValueError(f"Unsupported timestamp kind for unix_nanos output: {kind}")
 
