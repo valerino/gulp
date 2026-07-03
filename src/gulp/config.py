@@ -553,8 +553,7 @@ class GulpConfig:
 
         @return the maximum number of tasks executing concurrently in a process
         """
-        n = self._config.get("concurrency_tasks_cap_per_process", 64)
-        return n
+        return self._get_int_config("concurrency_tasks_cap_per_process", 64, minimum=1)
 
     def concurrency_num_tasks(self) -> int:
         """
@@ -588,7 +587,7 @@ class GulpConfig:
         scaled = (
             base_num_tasks * max(1, opensearch_num_nodes) * max(1, postgres_num_nodes)
         )
-        self._concurrency_num_tasks = max(8, min(cap_per_process, scaled))
+        self._concurrency_num_tasks = max(1, min(cap_per_process, scaled))
         return self._concurrency_num_tasks
 
     def concurrency_adaptive_num_tasks(self) -> bool:
@@ -602,15 +601,13 @@ class GulpConfig:
         """
         number of opensearch nodes used to determine concurrency max tasks when adaptive concurrency is enabled
         """
-        n = self._config.get("concurrency_opensearch_num_nodes", 1)
-        return n
+        return self._get_int_config("concurrency_opensearch_num_nodes", 1, minimum=1)
 
     def concurrency_postgres_num_nodes(self) -> int:
         """
         number of postgres nodes used to determine concurrency max tasks when adaptive concurrency is enabled
         """
-        n = self._config.get("concurrency_postgres_num_nodes", 1)
-        return n
+        return self._get_int_config("concurrency_postgres_num_nodes", 1, minimum=1)
 
     def opensearch_client_cert_password(self) -> str:
         """
@@ -618,6 +615,12 @@ class GulpConfig:
         """
         n = self._config.get("opensearch_client_cert_password", None)
         return n
+
+    def opensearch_pool_maxsize(self) -> int:
+        """
+        Per-process OpenSearch HTTP connection pool size.
+        """
+        return self._get_int_config("opensearch_pool_maxsize", 10, minimum=1)
 
     def parallel_processes_max(self) -> int:
         """

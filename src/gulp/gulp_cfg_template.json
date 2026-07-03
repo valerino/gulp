@@ -70,6 +70,8 @@
   "opensearch_client_cert_password": null,
   // how many seconds to wait until timeout (default=60, tune up if you have request timeouts during ingestion/query, 0=no timeout)
   "opensearch_request_timeout": 180,
+  // per-process OpenSearch HTTP connection pool size
+  "opensearch_pool_maxsize": 10,
   // on OpenSearch circuit-breaker responses, retry queries with highlights disabled (default=true)
   "query_circuit_breaker_disables_highlights": true,
   // max query retries after OpenSearch circuit-breaker responses (default=5)

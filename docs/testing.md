@@ -69,10 +69,19 @@ BIG_SIGMAS=1 python3 -m pytest -v -s -x ./tests/integration/test_stress.py::test
 # (requires the non-free query_sigma_zip plugin; cleanup defaults to true)
 ./test_scripts/sigma_zip_big_harness.py --users 3
 
+# spread workers round-robin across multiple backend instances
+./test_scripts/sigma_zip_big_harness.py \
+  --users 10 \
+  --instances 3 \
+  --instance-url http://localhost:8100 \
+  --instance-url http://localhost:8101
+
 # equivalent environment-driven run
 GULP_SIGMA_ZIP_USERS=10 \
 GULP_SIGMA_ZIP_CLEANUP=true \
 GULP_BASE_URL=http://localhost:8080 \
+GULP_SIGMA_ZIP_INSTANCES=3 \
+GULP_SIGMA_ZIP_INSTANCE_URLS=http://localhost:8100,http://localhost:8101 \
 GULP_TEST_USER=admin \
 GULP_TEST_PASSWORD=admin \
 ./test_scripts/sigma_zip_big_harness.py

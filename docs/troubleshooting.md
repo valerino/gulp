@@ -138,7 +138,8 @@ remove the container with `docker container rm some_container_id` and run the co
   - increase `ingestion_request_timeout` (**almost always this is the easiest solution**) **OR**
   - scale up OpenSearch nodes and set the `concurrency_adaptive_num_tasks` configuration parameter in the gulp configuration **OR**
   - reduce parallelism with `parallel_processes_max` **AND/OR** `concurrency_num_tasks` **OR**
-  - tune `ingestion_documents_chunk_size` configuration parameter (i.e. default is 1000, try with 2000 to reduce parallel chunks)
+  - tune `ingestion_documents_chunk_size` configuration parameter (i.e. default is 1000, try with 500 to reduce per-request pressure)
+    - for file ingestion, this only applies when `ingestion_documents_adaptive_chunk_size` is false
     - keep in mind, though, that a too big `ingestion_documents_chunk_size` may cause client websocket disconnections (`PayloadTooBig`)
 
 #### query
@@ -197,6 +198,7 @@ remove the container with `docker container rm some_container_id` and run the co
 
   - scale up opensearch nodes and set the `concurrency_adaptive_num_tasks` configuration parameter in the gulp configuration **OR**
   - also reducing `parallel_processes_max` **AND/OR** `concurrency_num_tasks` as for ingestion may help
+  - reduce `opensearch_pool_maxsize` if too many concurrent HTTP requests are in flight per process
 
 ## collab database (postgreSQL)
 
@@ -207,7 +209,7 @@ remove the container with `docker container rm some_container_id` and run the co
 - error `too many connections already` from postgres usually happens when ingesting too many files at once, and should be handled by tuning the configuration parameters:
   - in postgres configuration, increase `max_connections`
   - scale up postgreSQL nodes and set the `concurrency_adaptive_num_tasks` configuration parameter in the gulp configuration
-  - play with configuration parameters `postgres_pool_size` and `postgres_pool_max_overflow` to tune connections pool, and enable `postgres_adaptive_pool_size` to allow adaptive resizing of the pool (**recommended**)
+  - play with configuration parameters `postgres_pool_size` and `postgres_max_overflow` to tune connections pool, and enable `postgres_adaptive_pool_size` to allow adaptive resizing of the pool (**recommended**)
   
 ## websocket
 

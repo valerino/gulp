@@ -287,7 +287,6 @@ async def run_query_task(t: dict) -> bool:
         params: dict = t.get("params", {})
         user_id: str = t.get("user_id")
         req_id: str = t.get("req_id")
-        task_id: str = t.get("__task_id__") or req_id
         operation_id: str = t.get("operation_id")
         ws_id: str = t.get("ws_id")
 
@@ -300,7 +299,6 @@ async def run_query_task(t: dict) -> bool:
             "total_num_queries", 0
         )  # this may be provided upfront
         ignore_failures: bool = params.get("ignore_failures", False)
-
         # rebuild pydantic models from dict payloads
         q_models: list[GulpQuery] = []
         for qq in queries:
@@ -343,7 +341,6 @@ async def run_query_task(t: dict) -> bool:
                 plugin=plugin,
                 plugin_params=plugin_params_model,
                 ignore_failures=ignore_failures,
-                stats_update_prefix=task_id,
             )
             return True
     except Exception as ex:
@@ -522,7 +519,6 @@ async def run_query_batch(
     plugin: str = None,
     plugin_params: GulpPluginParameters | dict = None,
     ignore_failures: bool = False,
-    stats_update_key: str = None,
 ) -> list[tuple[int, int, str, bool] | Exception]:
     """Run a list of queries inside a single worker process.
 
@@ -612,7 +608,6 @@ async def run_query_batch(
                             inc_completed=completed,
                             errors=errors,
                             ignore_failures=ignore_failures,
-                            update_key=stats_update_key,
                         )
                     except WebSocketDisconnect:
                         # ignore if force_ignore_missing_ws is set
@@ -624,17 +619,6 @@ async def run_query_batch(
             )
 
     return per_query_results
-
-
-def _query_batch_stats_update_key(
-    req_id: str,
-    batch_start: int,
-    batch_size: int,
-    stats_update_prefix: str = None,
-) -> str:
-    """Return the counter update key for one query batch."""
-    prefix = stats_update_prefix or req_id
-    return f"query_batch:{prefix}:{batch_start}:{batch_size}"
 
 
 async def process_queries(
@@ -650,7 +634,6 @@ async def process_queries(
     plugin: str = None,
     plugin_params: GulpPluginParameters = None,
     ignore_failures: bool = False,
-    stats_update_prefix: str = None,
 ) -> bool:
     """
     runs in a background task and spawns workers to process (one or more) queries, batching them if needed.
@@ -670,8 +653,6 @@ async def process_queries(
         plugin: str - plugin name (for external queries)
         plugin_params: GulpPluginParameters - plugin parameters (for external queries)
         ignore_failures: bool - whether to ignore failures when finalizing stats (sets "failed" status only if all queries failed)
-        stats_update_prefix: str - internal task prefix for batch stats updates
-
     Returns:
         bool: True if the request was canceled, False otherwise.
     """
@@ -691,8 +672,8 @@ async def process_queries(
                 num_queries=num_total_queries, q_group=q_options.group
             ).model_dump(exclude_none=True)
         )
-        # store the list of queries in the stats for easier debugging and context (for external queries, this will be just one query)
-        data["q"] = [q.q for q in queries]
+        # Keep single-query stats useful without dumping large multi-query payloads.
+        data["q"] = [queries[0].q] if len(queries) == 1 else {}
         try:
             stats, stats_created = await GulpRequestStats.create_or_get_existing(
                 sess,
@@ -754,19 +735,14 @@ async def process_queries(
                 u: GulpUser = await GulpUser.get_by_id(sess, user_id)
                 await u.add_query_history_entry_batch(sess, history)
 
-        # 2. fan out query work. Keep each query in its own worker unit so one
-        # slow query does not block other queries that may run concurrently.
+        # 2. fan out query work. The API enqueues query batches in Redis; each
+        # Redis task processes its own batch without multiplying fanout again.
         # NOTE: for query_external, we will always have just one query to run.
-        batch_size: int = 1
-        max_concurrent_batches: int = max(
-            1, GulpConfig.get_instance().concurrency_num_tasks()
-        )
-
+        batch_size: int = max(1, len(queries))
         MutyLogger.get_instance().debug(
-            "processing %d queries in batches of %d, max_concurrent_batches=%d ...",
+            "processing %d queries in batches of %d ...",
             len(queries),
             batch_size,
-            max_concurrent_batches,
         )
 
         results: list[tuple[int, int, str, bool] | Exception] = []
@@ -797,12 +773,6 @@ async def process_queries(
                     else None
                 ),
                 ignore_failures=ignore_failures,
-                stats_update_key=_query_batch_stats_update_key(
-                    req_id,
-                    batch_start,
-                    len(batch),
-                    stats_update_prefix=stats_update_prefix,
-                ),
             )
             coro = GulpProcess.get_instance().process_pool.apply(
                 run_query_batch, kwds=run_query_batch_args
@@ -820,7 +790,7 @@ async def process_queries(
             nonlocal next_batch_start
             while (
                 next_batch_start < len(queries)
-                and len(pending_batches) < max_concurrent_batches
+                and len(pending_batches) < 1
                 and not req_canceled
             ):
                 _start_query_batch(next_batch_start)
@@ -954,6 +924,63 @@ async def process_queries(
                     raise
 
         raise
+
+
+async def _enqueue_query_tasks(
+    *,
+    task_type: str,
+    operation_id: str,
+    user_id: str,
+    ws_id: str,
+    req_id: str,
+    queries: list[GulpQuery],
+    q_options: GulpQueryParameters,
+    index: str = None,
+    plugin: str = None,
+    plugin_params: GulpPluginParameters = None,
+    total_num_queries: int = None,
+    ignore_failures: bool = False,
+) -> None:
+    """Enqueue query work as Redis batches, one process-pool batch per task."""
+    batch_size = max(1, GulpConfig.get_instance().concurrency_num_tasks())
+    total_num_queries = total_num_queries or len(queries)
+    q_options_payload = q_options.model_dump(exclude_none=True)
+    plugin_params_payload = (
+        plugin_params.model_dump(exclude_none=True) if plugin_params else None
+    )
+
+    for batch_num, start in enumerate(range(0, len(queries), batch_size), start=1):
+        batch = queries[start : start + batch_size]
+        query_payloads: list[dict] = []
+        for offset, q in enumerate(batch):
+            payload = q.model_dump(exclude_none=True)
+            payload.setdefault("query_ordinal", start + offset)
+            query_payloads.append(payload)
+
+        params: dict = {
+            "queries": query_payloads,
+            "q_options": q_options_payload,
+            "total_num_queries": total_num_queries,
+        }
+        if index is not None:
+            params["index"] = index
+        if plugin is not None:
+            params["plugin"] = plugin
+            params["plugin_params"] = plugin_params_payload
+        if ignore_failures:
+            params["ignore_failures"] = True
+
+        await GulpRedis.get_instance().task_enqueue(
+            {
+                "task_type": task_type,
+                "__task_id__": f"{req_id}:{task_type}:{batch_num}",
+                "operation_id": operation_id,
+                "user_id": user_id,
+                "ws_id": ws_id,
+                "req_id": req_id,
+                "params": params,
+            }
+        )
 
 
 async def _query_raw_sync(
@@ -1261,21 +1288,16 @@ one or more queries according to the [OpenSearch DSL specifications](https://ope
             if existing_response:
                 return existing_response
 
-            # run a background task (will batch queries, spawn workers, gather results)
-            # enqueue task for worker dispatch (always enqueue unless preview)
-            task_msg = {
-                "task_type": TASK_TYPE_QUERY,
-                "operation_id": operation_id,
-                "user_id": user_id,
-                "ws_id": ws_id,
-                "req_id": req_id,
-                "params": {
-                    "queries": [q.model_dump(exclude_none=True) for q in queries],
-                    "q_options": q_options.model_dump(exclude_none=True),
-                },
-            }
             try:
-                await GulpRedis.get_instance().task_enqueue(task_msg)
+                await _enqueue_query_tasks(
+                    task_type=TASK_TYPE_QUERY,
+                    operation_id=operation_id,
+                    user_id=user_id,
+                    ws_id=ws_id,
+                    req_id=req_id,
+                    queries=queries,
+                    q_options=q_options,
+                )
             except TaskQueueFullError as ex:
                 return ServerUtils.task_queue_full_response("query", req_id, ex)
 
@@ -1479,20 +1501,17 @@ async def query_gulp_handler(
             if existing_response:
                 return existing_response
 
-            task_msg = {
-                "task_type": TASK_TYPE_QUERY,
-                "operation_id": operation_id,
-                "user_id": user_id,
-                "ws_id": ws_id,
-                "req_id": req_id,
-                "params": {
-                    "queries": [q.model_dump(exclude_none=True) for q in queries],
-                    "q_options": q_options.model_dump(exclude_none=True),
-                    "index": op.index,
-                },
-            }
             try:
-                await GulpRedis.get_instance().task_enqueue(task_msg)
+                await _enqueue_query_tasks(
+                    task_type=TASK_TYPE_QUERY,
+                    operation_id=operation_id,
+                    user_id=user_id,
+                    ws_id=ws_id,
+                    req_id=req_id,
+                    queries=queries,
+                    q_options=q_options,
+                    index=op.index,
+                )
             except TaskQueueFullError as ex:
                 return ServerUtils.task_queue_full_response("query", req_id, ex)
 
@@ -1635,27 +1654,19 @@ async def query_external_handler(
             if existing_response:
                 return existing_response
 
-            task_msg = {
-                # external query is an ingestion task
-                "task_type": TASK_TYPE_EXTERNAL_QUERY,
-                "operation_id": operation_id,
-                "user_id": user_id,
-                "ws_id": ws_id,
-                "req_id": req_id,
-                "params": {
-                    "queries": [q.model_dump(exclude_none=True) for q in queries],
-                    "q_options": q_options.model_dump(exclude_none=True),
-                    "index": index,
-                    "plugin": plugin,
-                    "plugin_params": (
-                        plugin_params.model_dump(exclude_none=True)
-                        if plugin_params
-                        else None
-                    ),
-                },
-            }
             try:
-                await GulpRedis.get_instance().task_enqueue(task_msg)
+                await _enqueue_query_tasks(
+                    task_type=TASK_TYPE_EXTERNAL_QUERY,
+                    operation_id=operation_id,
+                    user_id=user_id,
+                    ws_id=ws_id,
+                    req_id=req_id,
+                    queries=queries,
+                    q_options=q_options,
+                    index=index,
+                    plugin=plugin,
+                    plugin_params=plugin_params,
+                )
             except TaskQueueFullError as ex:
                 return ServerUtils.task_queue_full_response("query", req_id, ex)
 
@@ -1830,21 +1841,16 @@ async def query_sigma_handler(
             if existing_response:
                 return existing_response
 
-            # run a background task (will batch queries, spawn workers, gather results)
-            # enqueue task for worker dispatch (always enqueue unless preview)
-            task_msg = {
-                "task_type": TASK_TYPE_QUERY,
-                "operation_id": operation_id,
-                "user_id": user_id,
-                "ws_id": ws_id,
-                "req_id": req_id,
-                "params": {
-                    "queries": [q.model_dump(exclude_none=True) for q in queries],
-                    "q_options": q_options.model_dump(exclude_none=True),
-                },
-            }
             try:
-                await GulpRedis.get_instance().task_enqueue(task_msg)
+                await _enqueue_query_tasks(
+                    task_type=TASK_TYPE_QUERY,
+                    operation_id=operation_id,
+                    user_id=user_id,
+                    ws_id=ws_id,
+                    req_id=req_id,
+                    queries=queries,
+                    q_options=q_options,
+                )
             except TaskQueueFullError as ex:
                 return ServerUtils.task_queue_full_response("query", req_id, ex)
 

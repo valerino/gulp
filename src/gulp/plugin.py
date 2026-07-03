@@ -1348,7 +1348,6 @@ class GulpPluginBase(ABC):
             user_id=stats.user_id,
             ws_id=ws_id,
             last=stats_last,
-            update_key=f"enrich_documents:{req_id}:{chunk_num}:{stats_last}",
         )
         return enriched_chunk
 

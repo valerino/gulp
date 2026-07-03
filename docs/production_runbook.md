@@ -190,6 +190,7 @@ Primary knobs:
 - `postgres_statement_timeout_ms`
 - `postgres_idle_in_transaction_session_timeout_ms`
 - `postgres_user_session_touch_interval_ms`
+- `opensearch_pool_maxsize`
 
 Connection pools are per process. Budget the maximum PostgreSQL connections as:
 
@@ -201,8 +202,8 @@ total_possible_connections =
 
 `processes_per_instance` is the main process plus configured worker processes.
 With the default PostgreSQL settings, each process may open up to
-`3 + 2 = 5` PostgreSQL connections. A single instance with four workers can
-therefore use up to `1 * 5 * 5 = 25` PostgreSQL connections before any other
+`1 + 0 = 1` PostgreSQL connection. A single instance with one worker can
+therefore use up to `1 * 2 * 1 = 2` PostgreSQL connections before any other
 gULP instance is counted.
 
 Triage rules:
@@ -237,10 +238,13 @@ Use this for development, demos, or a small single-tenant backend:
   "concurrency_adaptive_num_tasks": true,
   "concurrency_opensearch_num_nodes": 1,
   "concurrency_postgres_num_nodes": 1,
-  "concurrency_tasks_cap_per_process": 16,
+  "concurrency_tasks_cap_per_process": 1,
+  "ingestion_documents_chunk_size": 500,
+  "ingestion_documents_adaptive_chunk_size": false,
+  "opensearch_pool_maxsize": 1,
   "postgres_adaptive_pool_size": true,
-  "postgres_pool_size": 3,
-  "postgres_max_overflow": 2,
+  "postgres_pool_size": 1,
+  "postgres_max_overflow": 0,
   "postgres_pool_timeout_sec": 10,
   "postgres_pool_recycle_sec": 3600,
   "postgres_lock_timeout_ms": 5000,

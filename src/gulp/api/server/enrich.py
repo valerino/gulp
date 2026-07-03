@@ -527,7 +527,6 @@ async def _modify_documents_chunk(
         flt=flt,
         errors=errs,
         last=stats_last,
-        update_key=f"modify_documents:{req_id}:{chunk_num}:{stats_last}",
     )
     return chunk
 
@@ -551,7 +550,6 @@ async def _finalize_update_documents_stats(
         flt=flt,
         errors=errors,
         last=True,
-        update_key=f"modify_documents:{stats.id}:final",
     )
 
 
