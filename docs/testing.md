@@ -64,6 +64,18 @@ GULP_MULTI_INSTANCE_RAW_INGEST_DOCS=1000 \
 
 # run a specific test, use full windows sigma rules set
 BIG_SIGMAS=1 python3 -m pytest -v -s -x ./tests/integration/test_stress.py::test_concurrent_ingest_and_query_same_operation
+
+# run the BIG_SIGMAS sigma-zip flow as N created users in parallel, one operation per user 
+# (requires the non-free query_sigma_zip plugin; cleanup defaults to true)
+./test_scripts/sigma_zip_big_harness.py --users 3
+
+# equivalent environment-driven run
+GULP_SIGMA_ZIP_USERS=10 \
+GULP_SIGMA_ZIP_CLEANUP=true \
+GULP_BASE_URL=http://localhost:8080 \
+GULP_TEST_USER=admin \
+GULP_TEST_PASSWORD=admin \
+./test_scripts/sigma_zip_big_harness.py
 ~~~
 
 or use the provided [run_tests.sh](../test_scripts/run_tests.sh) script to run all tests automatically (or a subset of them)
