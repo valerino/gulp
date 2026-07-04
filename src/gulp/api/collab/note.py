@@ -165,6 +165,13 @@ class GulpNote(GulpCollabBase, type=COLLABTYPE_NOTE):
         return muty.crypto.hash_xxh128(encoded)
 
     @staticmethod
+    def _strip_text_for_ws_payload(note: dict) -> dict:
+        """Return a lightweight note object for automatic query-created websocket events."""
+        payload = dict(note)
+        payload["text"] = ""
+        return payload
+
+    @staticmethod
     async def bulk_create_for_documents_and_send_to_ws(
         sess: AsyncSession,
         operation_id: str,
@@ -300,8 +307,13 @@ class GulpNote(GulpCollabBase, type=COLLABTYPE_NOTE):
         )
 
         # send on ws, only keep the ones inserted (to avoid sending duplicates, but we always send something if "last" is set)
+        inserted_id_set = set(inserted_ids)
         inserted_notes: list[dict] = [
-            note for note in notes if note["id"] in inserted_ids
+            GulpNote._strip_text_for_ws_payload(
+                note
+            )  # strip text to reduce pressure on the websocket, the text is not used on the client side just to receive the note creation event
+            for note in notes
+            if note["id"] in inserted_id_set
         ]
         if inserted_notes or last:
             p: GulpCollabCreatePacket = GulpCollabCreatePacket(
@@ -320,7 +332,6 @@ class GulpNote(GulpCollabBase, type=COLLABTYPE_NOTE):
                 req_id=req_id,
                 d=p.model_dump(exclude_none=True),
                 force_ignore_missing_ws=q_options.force_ignore_missing_ws,
-
             )
             MutyLogger.get_instance().debug(
                 "sent (inserted) notes on the websocket %s: notes=%d,inserted=%d,last=%r (if 'notes' > 'inserted', duplicate notes were skipped!)"
