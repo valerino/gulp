@@ -5,6 +5,7 @@ This module provides a singleton class `GulpRedis` for managing asynchronous Red
 import asyncio
 import hashlib
 import time
+import json
 import zlib
 from typing import Annotated, Any, Callable, Optional
 from urllib.parse import urlparse
@@ -538,9 +539,15 @@ class GulpRedis:
         """
         # determine redis channel name
         channel_to_use = channel or _MAIN_REDIS_CHANNEL
+        try:
+            payload = orjson.dumps(message)
+        except Exception:
+            MutyLogger.get_instance().exception(
+                "failed to serialize message for with orjson, trying with json... anyway, it is invalid data, should be checked:\n%s\n",
+                message,
+            )
+            payload = json.dumps(message).encode()
 
-        # serialize message
-        payload = orjson.dumps(message)
         compression_threshold: int = (
             GulpConfig.get_instance().redis_compression_threshold() * 1024
         )

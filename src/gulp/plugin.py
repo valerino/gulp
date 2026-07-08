@@ -81,6 +81,7 @@ from gulp.structs import (
     ObjectNotFound,
 )
 
+
 class GulpPluginType(StrEnum):
     """
     specifies the plugin types
@@ -616,7 +617,7 @@ class GulpPluginBase(ABC):
 
         # to keep track of upload and delete file later in _ingest_file_internal
         self.upload_task: asyncio.Task | None = None
-        
+
         # just a shortcut for selected_mapping().unmapped_as_is
         self._unmapped_as_is: bool = False
 
@@ -1347,7 +1348,6 @@ class GulpPluginBase(ABC):
             user_id=stats.user_id,
             ws_id=ws_id,
             last=stats_last,
-            update_key=f"enrich_documents:{req_id}:{chunk_num}:{stats_last}",
         )
         return enriched_chunk
 
@@ -1404,7 +1404,6 @@ class GulpPluginBase(ABC):
             raise ValueError(
                 "enrich_documents: a non-empty fields parameter is mandatory"
             )
-            
 
         # initialize these in plugin
         self._user_id = user_id
@@ -2324,9 +2323,10 @@ class GulpPluginBase(ABC):
             except ValueError:
                 # not supported
                 MutyLogger.get_instance().warning(
-                    f"timestamp type {field_mapping.is_timestamp} not supported for key {source_key}, keeping as is..."
+                    f"timestamp type {field_mapping.is_timestamp} not supported for key {source_key}, value=%s, set to 0...",
+                    str(source_value),
                 )
-                return {}
+                source_value = 0
 
         if field_mapping.extra_doc_with_event_code:
             # this will trigger the creation of an extra document
@@ -2491,10 +2491,7 @@ class GulpPluginBase(ABC):
 
             self._preview_chunk.extend(docs)
             # MutyLogger.get_instance().debug("accumulated %d docs" % (len(self._preview_chunk)))
-            if (
-                len(self._preview_chunk)
-                >= self._plugin_params.preview_mode_max_records
-            ):
+            if len(self._preview_chunk) >= self._plugin_params.preview_mode_max_records:
                 # must stop
                 MutyLogger.get_instance().warning(
                     "***PREVIEW MODE*** reached %d documents, stopping!",
@@ -2573,7 +2570,7 @@ class GulpPluginBase(ABC):
             mappings,
             mapping_id,
             additional_mapping_files,
-            additional_mappings
+            additional_mappings,
         )
         if not plugin_params:
             # initialize as empty
@@ -2613,20 +2610,30 @@ class GulpPluginBase(ABC):
                 )"""
                 plugin_params.mapping_parameters.mappings.update(mappings or {})
 
-            if additional_mapping_files and not plugin_params.mapping_parameters.additional_mapping_files:
+            if (
+                additional_mapping_files
+                and not plugin_params.mapping_parameters.additional_mapping_files
+            ):
                 plugin_params.mapping_parameters.additional_mapping_files = (
                     additional_mapping_files
                 )
-            if additional_mappings and not plugin_params.mapping_parameters.additional_mappings:
+            if (
+                additional_mappings
+                and not plugin_params.mapping_parameters.additional_mappings
+            ):
                 """MutyLogger.get_instance().debug(
                     "---> setting plugin_params.mapping_parameters.additional_mappings with provided additional_mappings"
                 )"""
-                plugin_params.mapping_parameters.additional_mappings = additional_mappings
+                plugin_params.mapping_parameters.additional_mappings = (
+                    additional_mappings
+                )
             else:
                 """MutyLogger.get_instance().debug(
                     "---> updating plugin_params.mapping_parameters.additional_mappings with provided additional_mappings"
                 )"""
-                plugin_params.mapping_parameters.additional_mappings.update(additional_mappings or {})
+                plugin_params.mapping_parameters.additional_mappings.update(
+                    additional_mappings or {}
+                )
 
         # MutyLogger.get_instance().debug("---> ensured plugin_params: %s", plugin_params)
         return plugin_params

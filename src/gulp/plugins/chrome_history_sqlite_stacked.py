@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gulp.api.collab.stats import GulpRequestStats
 from gulp.api.collab.structs import GulpRequestStatus
+from gulp.api.mapping import mapping_utils
 from gulp.api.opensearch.filters import GulpIngestionFilter
 from gulp.plugin import GulpPluginBase, GulpPluginType
 from gulp.structs import GulpPluginParameters
@@ -86,7 +87,7 @@ class Plugin(GulpPluginBase):
             # download end event
             end_time = record["gulp.timestamp"]
             start_time = int(record["download.start_time"])
-            if end_time and start_time:
+            if end_time > 0 and start_time > 0:
                 # calculate download duration
                 record["event.duration"] = end_time - start_time
 

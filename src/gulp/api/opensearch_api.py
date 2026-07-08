@@ -114,8 +114,9 @@ class GulpOpenSearch:
             AsyncOpenSearch: An instance of the OpenSearch client.
 
         """
-        url = GulpConfig.get_instance().opensearch_url()
-        verify_certs = GulpConfig.get_instance().opensearch_verify_certs()
+        config = GulpConfig.get_instance()
+        url = config.opensearch_url()
+        verify_certs = config.opensearch_verify_certs()
 
         # split into user:pwd@host:port
         parsed = urlparse(url)
@@ -125,7 +126,12 @@ class GulpOpenSearch:
 
         host = parsed.scheme + "://" + parsed.hostname + ":" + str(parsed.port)
         ca = None
-        certs_dir = GulpConfig.get_instance().path_certs()
+        client_kwargs = {
+            "http_auth": (parsed.username, parsed.password),
+            "http_compress": True,
+            "pool_maxsize": config.opensearch_pool_maxsize(),
+        }
+        certs_dir = config.path_certs()
         if certs_dir and parsed.scheme.lower() == "https":
             # https and certs_dir is set
             ca: str = muty.file.abspath(
@@ -145,11 +151,11 @@ class GulpOpenSearch:
                 return AsyncOpenSearch(
                     host,
                     use_ssl=True,
-                    http_auth=(parsed.username, parsed.password),
                     ca_certs=ca,
                     client_cert=client_cert,
                     client_key=client_key,
                     verify_certs=verify_certs,
+                    **client_kwargs,
                 )
             else:
                 MutyLogger.get_instance().debug(
@@ -158,13 +164,13 @@ class GulpOpenSearch:
                 return AsyncOpenSearch(
                     host,
                     use_ssl=True,
-                    http_auth=(parsed.username, parsed.password),
                     ca_certs=ca,
                     verify_certs=verify_certs,
+                    **client_kwargs,
                 )
 
         # no https
-        el = AsyncOpenSearch(host, http_auth=(parsed.username, parsed.password))
+        el = AsyncOpenSearch(host, **client_kwargs)
         MutyLogger.get_instance().debug("created opensearch client: %s", el)
         return el
 

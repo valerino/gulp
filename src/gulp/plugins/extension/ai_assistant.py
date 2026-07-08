@@ -79,7 +79,7 @@ from gulp.api.server.structs import APIDependencies
 from gulp.api.server_api import GulpServer
 from gulp.api.ws_api import GulpRedisBroker
 from gulp.plugin import GulpPluginBase, GulpPluginType
-from gulp.plugins.extension.shared_object import Plugin as SharedObjectPlugin
+from gulp.plugins.extension.__shared_object import Plugin as SharedObjectPlugin
 
 from muty.jsend import JSendException, JSendResponse
 from muty.log import MutyLogger
@@ -159,7 +159,7 @@ class Plugin(GulpPluginBase):
 
     @override
     def depends_on(self) -> list[str]:
-        return ["shared_object"]
+        return ["__shared_object"]
 
     @override
     async def post_init(self, *kwargs):

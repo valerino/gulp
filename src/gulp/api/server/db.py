@@ -103,8 +103,6 @@ async def _rebase_callback(
     errors: list[str] = cb_context["errors"]
     stats: GulpRequestStats = cb_context["stats"]
     ws_id: str = cb_context["ws_id"]
-    chunk_num: int = cb_context.get("stats_update_chunk_num", 0)
-    cb_context["stats_update_chunk_num"] = chunk_num + 1
     # print("******************** rebase callback, total=%d, current=%d, last=%s, errors=%s, status=%s" % (total, current, last, errors, stats.status if stats else None))
     await stats.update_updatedocuments_stats(
         sess,
@@ -115,7 +113,6 @@ async def _rebase_callback(
         flt=flt,
         errors=errors,
         last=last,
-        update_key=f"rebase:{req_id}:{chunk_num}:{last}",
     )
 
 

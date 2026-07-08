@@ -57,6 +57,10 @@ async def _noop_advisory_lock(_sess, _obj_id):
     yield
 
 
+async def _append_async(items: list, item: object) -> None:
+    items.append(item)
+
+
 def _make_request_stats(req_type, data, status="ongoing"):
     from gulp.api.collab_api import GulpCollab
     from gulp.api.collab.stats import GulpRequestStats
@@ -299,116 +303,8 @@ def test_query_note_id_changes_for_duplicate_hit_ordinals():
 
 
 @pytest.mark.unit
-def test_stats_update_key_claims_once():
-    from gulp.api.collab.stats import GulpQueryStats, GulpRequestStats
-
-    data = GulpQueryStats()
-
-    assert GulpRequestStats._claim_stats_update_key(data, "query-batch-1") is True
-    assert GulpRequestStats._claim_stats_update_key(data, "query-batch-1") is False
-    assert GulpRequestStats._claim_stats_update_key(data, "query-batch-2") is True
-    assert data.applied_update_keys == ["query-batch-1", "query-batch-2"]
-
-
-@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_query_stats_update_key_suppresses_duplicate_counter_update(monkeypatch):
-    from gulp.api.collab.stats import GulpQueryStats, RequestStatsType
-    from gulp.api.collab.structs import GulpRequestStatus
-
-    updates = _patch_stats_persistence(monkeypatch)
-    stats = _make_request_stats(
-        RequestStatsType.REQUEST_TYPE_QUERY.value,
-        GulpQueryStats(num_queries=2).model_dump(),
-    )
-    sess = _FakeStatsSession()
-
-    await stats.update_query_stats(
-        sess,
-        hits=5,
-        inc_completed=1,
-        update_key="query_batch:req-stats:0:1",
-    )
-    await stats.update_query_stats(
-        sess,
-        hits=99,
-        inc_completed=1,
-        errors=["duplicated failure must not be recorded"],
-        update_key="query_batch:req-stats:0:1",
-    )
-    await stats.update_query_stats(
-        sess,
-        hits=4,
-        inc_completed=1,
-        update_key="query_batch:req-stats:1:1",
-    )
-
-    assert len(updates) == 2
-    assert stats.errors == []
-    assert stats.status == GulpRequestStatus.DONE.value
-    assert stats.data["total_hits"] == 9
-    assert stats.data["completed_queries"] == 2
-    assert stats.data["failed_queries"] == 0
-    assert stats.data["applied_update_keys"] == [
-        "query_batch:req-stats:0:1",
-        "query_batch:req-stats:1:1",
-    ]
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_updatedocuments_stats_update_key_suppresses_duplicate_counter_update(
-    monkeypatch,
-):
-    from gulp.api.collab.stats import GulpUpdateDocumentsStats, RequestStatsType
-    from gulp.api.collab.structs import GulpRequestStatus
-
-    updates = _patch_stats_persistence(monkeypatch)
-    stats = _make_request_stats(
-        RequestStatsType.REQUEST_TYPE_ENRICHMENT.value,
-        GulpUpdateDocumentsStats(total_hits=3).model_dump(),
-    )
-    sess = _FakeStatsSession()
-
-    await stats.update_updatedocuments_stats(
-        sess,
-        total_hits=3,
-        updated=1,
-        errors=[],
-        last=False,
-        update_key="enrich_documents:req-stats:0:False",
-    )
-    await stats.update_updatedocuments_stats(
-        sess,
-        total_hits=3,
-        updated=2,
-        errors=["duplicated failure must not be recorded"],
-        last=True,
-        update_key="enrich_documents:req-stats:0:False",
-    )
-    await stats.update_updatedocuments_stats(
-        sess,
-        total_hits=3,
-        updated=2,
-        errors=[],
-        last=True,
-        update_key="enrich_documents:req-stats:1:True",
-    )
-
-    assert len(updates) == 2
-    assert stats.errors == []
-    assert stats.status == GulpRequestStatus.DONE.value
-    assert stats.data["updated"] == 3
-    assert stats.data["total_hits"] == 3
-    assert stats.data["applied_update_keys"] == [
-        "enrich_documents:req-stats:0:False",
-        "enrich_documents:req-stats:1:True",
-    ]
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_run_query_batch_passes_stats_update_key(monkeypatch):
+async def test_run_query_batch_updates_stats(monkeypatch):
     from gulp.api.server import query as query_mod
 
     update_query_stats = AsyncMock()
@@ -436,89 +332,15 @@ async def test_run_query_batch_passes_stats_update_key(monkeypatch):
         ws_id="ws-query-key",
         queries=[{"q": {"query": {"match_all": {}}}, "q_name": "query-name"}],
         q_options={"name": "query-name"},
-        stats_update_key="query_batch:req-query-key:0:1",
     )
 
     assert result == [(1, 2, "query-name", False)]
     update_query_stats.assert_awaited_once()
-    assert update_query_stats.await_args.kwargs["update_key"] == (
-        "query_batch:req-query-key:0:1"
-    )
-
-
-@pytest.mark.unit
-def test_query_batch_stats_update_key_uses_task_prefix_for_fanout_requests():
-    from gulp.api.server import query as query_mod
-
-    assert (
-        query_mod._query_batch_stats_update_key(
-            "req-shared",
-            0,
-            16,
-            stats_update_prefix="req-shared:sigma_zip:1",
-        )
-        == "query_batch:req-shared:sigma_zip:1:0:16"
-    )
-    assert (
-        query_mod._query_batch_stats_update_key(
-            "req-shared",
-            0,
-            16,
-            stats_update_prefix="req-shared:sigma_zip:2",
-        )
-        == "query_batch:req-shared:sigma_zip:2:0:16"
-    )
-    assert (
-        query_mod._query_batch_stats_update_key("req-shared", 0, 16)
-        == "query_batch:req-shared:0:16"
-    )
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_rebase_callback_passes_deterministic_stats_update_keys():
-    from gulp.api.server import db as db_mod
-
-    update_documents_stats = AsyncMock()
-    stats = SimpleNamespace(
-        user_id="user-rebase-key",
-        update_updatedocuments_stats=update_documents_stats,
-    )
-    cb_context = {
-        "flt": None,
-        "errors": [],
-        "stats": stats,
-        "ws_id": "ws-rebase-key",
-    }
-
-    await db_mod._rebase_callback(
-        "fake-session",
-        total=2,
-        current=1,
-        req_id="req-rebase-key",
-        last=False,
-        cb_context=cb_context,
-    )
-    await db_mod._rebase_callback(
-        "fake-session",
-        total=2,
-        current=0,
-        req_id="req-rebase-key",
-        last=True,
-        cb_context=cb_context,
-    )
-
-    assert update_documents_stats.await_args_list[0].kwargs["update_key"] == (
-        "rebase:req-rebase-key:0:False"
-    )
-    assert update_documents_stats.await_args_list[1].kwargs["update_key"] == (
-        "rebase:req-rebase-key:1:True"
-    )
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_modify_documents_chunk_passes_deterministic_stats_update_key(monkeypatch):
+async def test_modify_documents_chunk_updates_stats(monkeypatch):
     from gulp.api.server import enrich as enrich_mod
 
     update_documents_stats = AsyncMock()
@@ -560,9 +382,6 @@ async def test_modify_documents_chunk_passes_deterministic_stats_update_key(monk
     update_documents.assert_awaited_once()
     assert update_documents.await_args.args[1] == [chunk[0]]
     update_documents_stats.assert_awaited_once()
-    assert update_documents_stats.await_args.kwargs["update_key"] == (
-        "modify_documents:req-modify-key:3:True"
-    )
     assert update_documents_stats.await_args.kwargs["updated"] == 1
 
 
@@ -609,13 +428,11 @@ async def test_modify_documents_chunk_can_defer_terminal_stats_update(monkeypatc
 
     update_documents_stats.assert_awaited_once()
     assert update_documents_stats.await_args.kwargs["last"] is False
-    assert update_documents_stats.await_args.kwargs["update_key"] == (
-        "modify_documents:req-modify-defer:3:False"
-    )
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_enrich_documents_wrapper_passes_deterministic_stats_update_key(monkeypatch):
+async def test_enrich_documents_wrapper_updates_stats(monkeypatch):
     from gulp import plugin as plugin_mod
 
     update_documents_stats = AsyncMock()
@@ -662,9 +479,6 @@ async def test_enrich_documents_wrapper_passes_deterministic_stats_update_key(mo
     update_documents.assert_awaited_once()
     assert update_documents.await_args.args[1] == result
     update_documents_stats.assert_awaited_once()
-    assert update_documents_stats.await_args.kwargs["update_key"] == (
-        "enrich_documents:req-enrich-key:4:False"
-    )
     assert update_documents_stats.await_args.kwargs["updated"] == 1
 
 
@@ -716,9 +530,7 @@ async def test_enrich_documents_wrapper_can_defer_terminal_stats_update(monkeypa
 
     update_documents_stats.assert_awaited_once()
     assert update_documents_stats.await_args.kwargs["last"] is False
-    assert update_documents_stats.await_args.kwargs["update_key"] == (
-        "enrich_documents:req-enrich-defer:4:False"
-    )
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -756,6 +568,9 @@ async def test_process_queries_skips_terminal_request_duplicate(monkeypatch):
 
     assert canceled is False
     create_or_get.assert_awaited_once()
+    assert create_or_get.await_args.kwargs["data"]["q"] == [
+        {"query": {"match_all": {}}}
+    ]
     worker_apply.assert_not_called()
 
 
@@ -791,7 +606,48 @@ async def test_process_queries_reports_terminal_canceled_duplicate(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_process_queries_fans_out_query_batches_without_waiting_for_slow_batch(
+async def test_enqueue_query_tasks_batches_by_configured_concurrency(monkeypatch):
+    from gulp.api.opensearch.structs import GulpQuery, GulpQueryParameters
+    from gulp.api.server import query as query_mod
+    from gulp.api.server.structs import TASK_TYPE_QUERY
+
+    enqueued: list[dict] = []
+    monkeypatch.setattr(
+        query_mod.GulpConfig,
+        "get_instance",
+        lambda: SimpleNamespace(concurrency_num_tasks=lambda: 2),
+    )
+    monkeypatch.setattr(
+        query_mod.GulpRedis,
+        "get_instance",
+        lambda: SimpleNamespace(task_enqueue=lambda task: _append_async(enqueued, task)),
+    )
+
+    await query_mod._enqueue_query_tasks(
+        task_type=TASK_TYPE_QUERY,
+        operation_id="op-query-batch",
+        user_id="user-query-batch",
+        ws_id="ws-query-batch",
+        req_id="req-query-batch",
+        queries=[
+            GulpQuery(q={"query": {"match_all": {}}}, q_name=f"q{i}")
+            for i in range(5)
+        ],
+        q_options=GulpQueryParameters(add_to_history=False),
+    )
+
+    assert [len(task["params"]["queries"]) for task in enqueued] == [2, 2, 1]
+    assert [task["__task_id__"] for task in enqueued] == [
+        "req-query-batch:query:1",
+        "req-query-batch:query:2",
+        "req-query-batch:query:3",
+    ]
+    assert all(task["params"]["total_num_queries"] == 5 for task in enqueued)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_process_queries_submits_one_pool_job_for_redis_batch(
     monkeypatch,
 ):
     from gulp.api.collab.structs import GulpRequestStatus
@@ -799,30 +655,19 @@ async def test_process_queries_fans_out_query_batches_without_waiting_for_slow_b
     from gulp.api.server import query as query_mod
 
     stats = SimpleNamespace(status=GulpRequestStatus.ONGOING.value)
+    create_or_get = AsyncMock(return_value=(stats, True))
     monkeypatch.setattr(
         query_mod.GulpRequestStats,
         "create_or_get_existing",
-        AsyncMock(return_value=(stats, True)),
+        create_or_get,
     )
-    monkeypatch.setattr(
-        query_mod.GulpConfig,
-        "get_instance",
-        lambda: SimpleNamespace(concurrency_num_tasks=lambda: 2),
-    )
-
-    release_slow = asyncio.Event()
-    third_query_started = asyncio.Event()
-    started_queries: list[str] = []
+    submitted_batches: list[list[str]] = []
 
     def _apply(_fn, kwds):
         async def _run_batch():
-            q_name = kwds["queries"][0]["q_name"]
-            started_queries.append(q_name)
-            if q_name == "q0":
-                await release_slow.wait()
-            if q_name == "q2":
-                third_query_started.set()
-            return [(1, 1, q_name, False)]
+            q_names = [q["q_name"] for q in kwds["queries"]]
+            submitted_batches.append(q_names)
+            return [(1, 1, q_name, False) for q_name in q_names]
 
         return _run_batch()
 
@@ -849,16 +694,11 @@ async def test_process_queries_fans_out_query_batches_without_waiting_for_slow_b
         )
     )
 
-    await asyncio.wait_for(third_query_started.wait(), timeout=1)
-    assert "q0" in started_queries
-    assert "q1" in started_queries
-    assert "q2" in started_queries
-    assert not release_slow.is_set()
-
-    release_slow.set()
     canceled = await process_task
 
     assert canceled is False
+    assert submitted_batches == [["q0", "q1", "q2"]]
+    assert create_or_get.await_args.kwargs["data"]["q"] == {}
 
 
 @pytest.mark.unit

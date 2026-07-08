@@ -1,6 +1,6 @@
 import pytest
 
-from gulp.api.opensearch.structs import GulpQueryHelpers
+from gulp.api.opensearch.structs import GulpQueryHelpers, GulpQueryParameters
 
 
 @pytest.mark.unit
@@ -19,3 +19,5 @@ def test_merge_queries_does_not_duplicate_existing_filter():
     merged = GulpQueryHelpers.merge_queries(existing, incoming)
 
     assert merged == existing
+
+

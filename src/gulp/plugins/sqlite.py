@@ -8,6 +8,9 @@ it can handle encrypted databases and custom queries for specific tables.
 
 in standalone mode, it is advised that a mapping file is provided to ensure the `@timestamp`
 field is mapped correctly.
+
+note about mapping_id:
+in this plugin `mapping_id` is ignored: the mapping_id is set to the table name being processed, and the mapping file should contain mappings for each table to be processed.
 """
 
 import os
