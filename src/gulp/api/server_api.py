@@ -228,11 +228,9 @@ class GulpServer:
             status_code = 409
         elif isinstance(ex, ValueError):
             status_code = 400
-        elif (
-            isinstance(ex, MissingPermission)
-            or isinstance(ex, WrongUsernameOrPassword)
-            or isinstance(ex, SessionExpired)
-        ):
+        elif isinstance(ex, MissingPermission):
+            status_code = 403
+        elif isinstance(ex, WrongUsernameOrPassword) or isinstance(ex, SessionExpired):
             status_code = 401
 
         try:
@@ -477,7 +475,9 @@ class GulpServer:
             await asyncio.sleep(interval)
             await GulpRedis.get_instance().task_refresh_lease(task)
 
-    async def _await_task_with_lease(self, task: dict, awaitable: Awaitable[Any]) -> Any:
+    async def _await_task_with_lease(
+        self, task: dict, awaitable: Awaitable[Any]
+    ) -> Any:
         """Await a task while keeping its Redis stream pending entry fresh."""
         lease_task = asyncio.create_task(self._refresh_task_lease_until_done(task))
         try:
@@ -504,9 +504,7 @@ class GulpServer:
         except (TypeError, ValueError):
             return 0
 
-    async def _mark_failed_task_stats_failed(
-        self, task: dict, reason: str
-    ) -> None:
+    async def _mark_failed_task_stats_failed(self, task: dict, reason: str) -> None:
         """Mark an existing request stats object failed after terminal task failure."""
         req_id = task.get("req_id")
         if not req_id:
@@ -596,10 +594,7 @@ class GulpServer:
             return
 
         task_results = await asyncio.gather(
-            *[
-                self._await_task_with_lease(obj, coro)
-                for obj, coro in task_coros
-            ],
+            *[self._await_task_with_lease(obj, coro) for obj, coro in task_coros],
             return_exceptions=True,
         )
         for (obj, _), res in zip(task_coros, task_results):
@@ -637,6 +632,7 @@ class GulpServer:
         MutyLogger.get_instance().info("STARTING dispatch_tasks loop ...")
 
         in_flight: set[asyncio.Task[None]] = set()
+
         def _consume_dispatch_result(task: asyncio.Task[None]) -> None:
             in_flight.discard(task)
             with suppress(asyncio.CancelledError):
@@ -768,7 +764,9 @@ class GulpServer:
                     "***ERROR*** in background task: %s", ex
                 )
             finally:
-                MutyLogger.get_instance().debug("background task name=%s completed!", name)
+                MutyLogger.get_instance().debug(
+                    "background task name=%s completed!", name
+                )
 
         if name:
             # check if a task with the same name already exists in the current process
