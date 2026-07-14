@@ -10,11 +10,11 @@ local_scheme = "no-local-version"
 
 [project]
 name = "mentat-gulp"
-dynamic= ["version"]
+dynamic = ["version"]
 authors = [{ name = "Mentat", email = "info@mentat.is" }]
 description = "gULP - (generic) Unified Log Processor."
 readme = "README.md"
-license = {text = "AGPL-3.0 and GULP (see LICENSE.md file)"}
+license = { text = "AGPL-3.0 and GULP (see LICENSE.md file)" }
 # some dependencies have not yet updated for python 3.14, so we need to limit the supported versions for now
 requires-python = ">=3.12"
 dependencies = [
@@ -62,7 +62,7 @@ dependencies = [
     "fastapi==0.136.1",
     "frozenlist==1.8.0",
     "gitdb==4.0.12",
-    "gulp-sdk",
+    "gulp-sdk<2.0.0",
     "GitPython==3.1.50",
     "greenlet==3.5.0",
     "h11==0.16.0",
@@ -157,7 +157,7 @@ dependencies = [
     "xmltodict==1.0.4",
     "xxhash==3.7.0",
     "yarl==1.23.0",
-] 
+]
 
 [project.scripts]
 gulp = "gulp.__main__:main"
@@ -179,7 +179,7 @@ minversion = "7.0"
 
 # Match SDK pytest markers to avoid marker warnings
 markers = [
-	"integration: Integration tests (requires live Gulp server)",
-	"e2e: End-to-end tests",
-	"stress: Stress tests (long-running, resource-intensive tests with ingestion/query)",
+    "integration: Integration tests (requires live Gulp server)",
+    "e2e: End-to-end tests",
+    "stress: Stress tests (long-running, resource-intensive tests with ingestion/query)",
 ]
